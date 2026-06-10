@@ -1,40 +1,24 @@
-# ═══════════════════════════════════════════════════════════════════════════════
 # AXR Transparency Monitor - GitHub Actions (v2 - Fable 5 layout)
-# ═══════════════════════════════════════════════════════════════════════════════
-# Naponta lefuttatja az axr-monitor.js poll-t a repoban publikalt STH-folyam
-# folott, es a monitor journaljat (monitor/monitor-state.json) commitkent orzi.
-#
-# Mit ad ez:
-#   - A monitor a GitHub infrastrukturajan fut, nem az operatoren.
-#   - A journal nyilvanos git-historyban el - visszamenoleg nem irhato at
-#     csendben (minden allapot commitkent, idobelyegekkel).
-#   - Sertes (EQUIVOCATION / TRUNCATION / NON_APPEND_ONLY / ROOT_MISMATCH /
-#     BAD_SIGNATURE) eseten a job elbukik ES automatikusan issue nyilik.
-#
-# Elvarasok ebben a repoban:
-#   sth-hu.jsonl          - a publikalt STH-folyam (a publish-sth.sh tolja)
-#   anchors-hu.jsonl      - horgony-rekordok (opcionalis, de ajanlott)
-#   keys/sth-public.pem   - az STH-alairo PUBLIKUS kulcsa
-#   monitor/              - a monitor journalja (ez a workflow irja)
-# ═══════════════════════════════════════════════════════════════════════════════
+# Runs axr-monitor.js poll on the published STH stream daily,
+# and preserves the monitor journal as commits.
 
 name: AXR transparency monitor
 
 on:
   schedule:
-    - cron: '17 4 * * *'        # naponta 04:17 UTC (kerulve az egesz oras csucsot)
-  workflow_dispatch: {}          # kezi inditas is lehetseges
+    - cron: '17 4 * * *'
+  workflow_dispatch: {}
   push:
     paths:
-      - 'sth-hu.jsonl'           # uj STH publikalasakor azonnal ellenoriz
+      - 'sth-hu.jsonl'
 
 permissions:
-  contents: write                # journal-commit
-  issues: write                  # riasztas sertesnel
+  contents: write
+  issues: write
 
 concurrency:
   group: axr-monitor
-  cancel-in-progress: false      # ket poll ne irja egymas alatt a journalt
+  cancel-in-progress: false
 
 jobs:
   monitor:
@@ -67,9 +51,8 @@ jobs:
           code=${PIPESTATUS[0]}
           set -e
           echo "exit_code=$code" >> "$GITHUB_OUTPUT"
-          # 0 = konzisztens, 1 = SERTES, 2 = hasznalati hiba - mindharmat kezeljuk
           if [ "$code" = "2" ]; then
-            echo "::error::Monitor usage error - a workflow vagy a repo-strukturak elcsusztak"
+            echo "::error::Monitor usage error - check workflow or repo structure"
           fi
 
       - name: Commit the monitor journal
@@ -81,7 +64,7 @@ jobs:
             git commit -m "monitor: poll $(date -u +%Y-%m-%dT%H:%MZ) (exit ${{ steps.poll.outputs.exit_code }})"
             git push
           else
-            echo "Nincs journal-valtozas."
+            echo "No journal changes."
           fi
 
       - name: Open an issue on violation
@@ -93,15 +76,14 @@ jobs:
           existing=$(gh issue list --state open --search "AXR MONITOR ALERT" --json number --jq 'length')
           body="The independent monitor detected a violation in the published STH stream.
 
-\`\`\`
-$(tail -40 monitor/last-poll.log)
-\`\`\`
+          $(tail -40 monitor/last-poll.log)
 
-Possible causes: EQUIVOCATION (split view), TRUNCATION, NON_APPEND_ONLY (history rewrite), ROOT_MISMATCH, or BAD_SIGNATURE. See the monitor journal history in \`monitor/\` for the witnessed tree heads."
+          Possible causes: EQUIVOCATION, TRUNCATION, NON_APPEND_ONLY, ROOT_MISMATCH, or BAD_SIGNATURE.
+          See monitor/ for the witnessed tree heads."
           if [ "$existing" = "0" ]; then
             gh issue create --title "$title" --body "$body" --label "monitor-alert" || gh issue create --title "$title" --body "$body"
           else
-            echo "Mar van nyitott monitor-alert issue - nem duplikalunk."
+            echo "Open monitor-alert issue already exists - skipping."
           fi
 
       - name: Fail the job on violation
