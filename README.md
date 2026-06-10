@@ -1,63 +1,64 @@
-# AXR Transparency Log
+# AXR Transparency Log — ECO Clean HU booking agent
 
-Public Signed Tree Head (STH) stream for the [AXR](https://github.com/chrisconen/AXR) production receipt chain.
+This repository is the **public transparency stream** for one production AI-agent
+deployment of [AXR](https://github.com/chrisconen/AXR) (Agent Execution Receipt):
+the geo-cluster booking workflow of ECO Clean HU.
 
-## What is this?
+It is the moral equivalent of a Certificate Transparency log's public face,
+scaled to a one-person operation — honestly labeled as such.
 
-The AXR receipt generator on our production booking workflow (ECO Clean HU) signs every decision into a tamper-evident, append-only chain. Hourly, the chain is batched into an RFC 6962 Merkle tree and a **Signed Tree Head** is emitted.
+## What is published here
 
-This repository publishes those STHs so that **anyone can independently verify** that:
+| File | What it is |
+|------|------------|
+| `sth-hu.jsonl` | The append-only stream of **Signed Tree Heads**: at each anchoring interval, the Merkle root over all production receipts, signed with a dedicated STH key |
+| `anchors-hu.jsonl` | Anchor records binding each tree head to an external backend |
+| `keys/sth-public.pem` | The STH-signing **public** key (separate from the receipt-signing key — key-role separation) |
+| `monitor/` | The journal of the GitHub-hosted monitor (written by the scheduled Action, committed publicly) |
 
-- the log has never been truncated (tree size only grows)
-- the operator has never shown two different trees at the same size (equivocation)
-- every new tree head is a consistent extension of the previous one
+**What is *not* published:** the receipts themselves. `receipts-hu.jsonl` contains
+customer-adjacent data and stays private. The tree heads commit to it
+cryptographically; an auditor with authorized access to the private log can verify
+every receipt against this public stream.
 
-This is the Certificate Transparency model applied to AI agent accountability.
+## What this gives you (and what it doesn't)
 
-## How it works
+Every push of `sth-hu.jsonl` is checked by a scheduled GitHub Action running the
+independent monitor (`axr-monitor.js`) **on GitHub's infrastructure, not the
+operator's**. The monitor keeps its own journal in `monitor/` and will fail the
+build and open an issue on:
 
-1. **Operator side** (Z440, hourly cron): the anchoring sidecar (`axr-anchor.js`) runs inside the n8n Docker container, produces an STH, and a publish script pushes the updated files here.
+- **EQUIVOCATION** — a different root at an already-witnessed tree size (split view)
+- **TRUNCATION** — the published log shrank
+- **NON_APPEND_ONLY** — a consistency proof fails: history was rewritten
+- **ROOT_MISMATCH / BAD_SIGNATURE**
 
-2. **GitHub Actions** (daily, on GitHub's infrastructure): runs `axr-monitor.js poll` against the published STH stream with its own retained journal. If it detects any inconsistency, it opens an issue automatically.
+Honest caveats: the operator controls this repository and the Action definition,
+so this is *not* adversarially independent third-party monitoring — it is
+infrastructure-separated monitoring with a public, timestamped journal. The git
+history itself acts as an additional weak witness: silently rewriting the
+published stream would require rewriting public history. True third-party
+monitoring means **you** running the monitor — see below.
 
-3. **Anyone** can clone this repo and run the monitor themselves:
-   ```bash
-   git clone https://github.com/chrisconen/axr-transparency-log.git
-   cd axr-transparency-log
-   node axr-monitor.js poll logs/eco-clean-hu/sth.jsonl keys/sth-public.pem \
-        --state my-monitor-state.json \
-        --anchors logs/eco-clean-hu/anchors.jsonl \
-        --log-id axr:eco-clean-hu:v1
-   ```
+## Run your own monitor (please do)
 
-## Structure
+Anyone can witness this log independently. Zero dependencies beyond Node:
 
+```bash
+git clone https://github.com/chrisconen/AXR axr-tools
+# daily, from any machine in the world:
+node axr-tools/axr-monitor.js poll \
+  https-or-local-copy-of/sth-hu.jsonl keys/sth-public.pem \
+  --state my-own-journal.json --anchors anchors-hu.jsonl
+# compare your view with the public one (split-view proof):
+node axr-tools/axr-monitor.js compare my-own-journal.json monitor/monitor-state.json
 ```
-keys/
-  sth-public.pem          # STH verification key (public only)
-logs/
-  eco-clean-hu/
-    sth.jsonl             # Signed Tree Heads (append-only)
-    anchors.jsonl         # Anchor records
-monitor/
-  journal.json            # GitHub Actions monitor's retained state
-.github/
-  workflows/
-    monitor.yml           # Daily independent monitor Action
-```
 
-## Trust model
+If your journal ever disagrees with this repository's, you hold cryptographic
+evidence of equivocation. Open an issue with both journals — that is the system
+working as designed.
 
-- The **signing key** never leaves the operator's infrastructure. Only the public key is here.
-- The **monitor journal** lives in git history — rewriting it requires force-pushing, which is visible.
-- The Action runs on **GitHub's infrastructure**, not the operator's.
-- This is not perfect adversarial independence (the repo owner could disable the Action), but it is a meaningful trust-domain separation for a small team, and the full git history is publicly auditable.
+## Provenance
 
-## Related
-
-- [AXR](https://github.com/chrisconen/AXR) — the protocol, verifier, and all tooling
-- [Conen Digital](https://conendigital.hu) — the operator
-
-## License
-
-MIT
+Protocol and tooling: [AXR](https://github.com/chrisconen/AXR) — built by
+Conen Digital as a human + AI collaboration (Claude, Gemini). MIT licensed.

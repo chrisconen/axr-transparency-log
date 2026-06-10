@@ -1,65 +1,109 @@
-name: AXR Independent Monitor
+# ═══════════════════════════════════════════════════════════════════════════════
+# AXR Transparency Monitor - GitHub Actions
+# ═══════════════════════════════════════════════════════════════════════════════
+# Naponta lefuttatja az axr-monitor.js poll-t a repoban publikalt STH-folyam
+# folott, es a monitor journaljat (monitor/monitor-state.json) commitkent orzi.
+#
+# Mit ad ez:
+#   - A monitor a GitHub infrastrukturajan fut, nem az operatoren.
+#   - A journal nyilvanos git-historyban el - visszamenoleg nem irhato at
+#     csendben (minden allapot commitkent, idobelyegekkel).
+#   - Sertes (EQUIVOCATION / TRUNCATION / NON_APPEND_ONLY / ROOT_MISMATCH /
+#     BAD_SIGNATURE) eseten a job elbukik ES automatikusan issue nyilik.
+#
+# Elvarasok ebben a repoban:
+#   sth-hu.jsonl          - a publikalt STH-folyam (a publish-sth.sh tolja)
+#   anchors-hu.jsonl      - horgony-rekordok (opcionalis, de ajanlott)
+#   keys/sth-public.pem   - az STH-alairo PUBLIKUS kulcsa
+#   monitor/              - a monitor journalja (ez a workflow irja)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+name: AXR transparency monitor
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # Daily at 08:00 UTC
-  workflow_dispatch: {}    # Manual trigger
+    - cron: '17 4 * * *'        # naponta 04:17 UTC (kerulve az egesz oras csucsot)
+  workflow_dispatch: {}          # kezi inditas is lehetseges
+  push:
+    paths:
+      - 'sth-hu.jsonl'           # uj STH publikalasakor azonnal ellenoriz
 
 permissions:
-  contents: write
-  issues: write
+  contents: write                # journal-commit
+  issues: write                  # riasztas sertesnel
+
+concurrency:
+  group: axr-monitor
+  cancel-in-progress: false      # ket poll ne irja egymas alatt a journalt
 
 jobs:
-  monitor-poll:
+  monitor:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Transparency repo checkout
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
+      - name: AXR tooling checkout (monitor + core)
+        uses: actions/checkout@v4
+        with:
+          repository: chrisconen/AXR
+          path: axr-tools
+
+      - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
-      - name: Run AXR Monitor poll
+      - name: Poll the published STH stream
         id: poll
         run: |
+          mkdir -p monitor
           set +e
-          OUTPUT=$(node axr-monitor.js poll \
-            logs/eco-clean-hu/sth.jsonl \
-            keys/sth-public.pem \
-            --state monitor/journal.json \
-            --anchors logs/eco-clean-hu/anchors.jsonl \
-            --log-id axr:eco-clean-hu:v1 2>&1)
-          EXIT_CODE=$?
-          echo "$OUTPUT"
-          echo "exit_code=$EXIT_CODE" >> "$GITHUB_OUTPUT"
-          echo "output<<EOF" >> "$GITHUB_OUTPUT"
-          echo "$OUTPUT" >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
-
-      - name: Commit updated journal
-        run: |
-          git config user.name "AXR Monitor Bot"
-          git config user.email "axr-monitor@users.noreply.github.com"
-          if [ -f monitor/journal.json ]; then
-            git add monitor/journal.json
-            git diff --staged --quiet || git commit -m "monitor: poll $(date -u +%Y-%m-%dT%H:%M:%SZ) — tree_size=$(jq -r '.max_tree_size // "?"' monitor/journal.json)"
-            git push
-          else
-            echo "No journal file yet — monitor may not have written state"
+          node axr-tools/axr-monitor.js poll \
+            sth-hu.jsonl keys/sth-public.pem \
+            --state monitor/monitor-state.json \
+            --anchors anchors-hu.jsonl \
+            --log-id axr:eco-clean-hu:v1 | tee monitor/last-poll.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$code" >> "$GITHUB_OUTPUT"
+          # 0 = konzisztens, 1 = SERTES, 2 = hasznalati hiba - mindharmat kezeljuk
+          if [ "$code" = "2" ]; then
+            echo "::error::Monitor usage error - a workflow vagy a repo-strukturak elcsusztak"
           fi
 
-      - name: Open issue on failure
+      - name: Commit the monitor journal
+        run: |
+          git config user.name  "axr-monitor[bot]"
+          git config user.email "axr-monitor@users.noreply.github.com"
+          git add monitor/
+          if ! git diff --cached --quiet; then
+            git commit -m "monitor: poll $(date -u +%Y-%m-%dT%H:%MZ) (exit ${{ steps.poll.outputs.exit_code }})"
+            git push
+          else
+            echo "Nincs journal-valtozas."
+          fi
+
+      - name: Open an issue on violation
         if: steps.poll.outputs.exit_code == '1'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const output = `${{ steps.poll.outputs.output }}`;
-            await github.rest.issues.create({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              title: `AXR Monitor ALERT — inconsistency detected (${new Date().toISOString().slice(0,10)})`,
-              body: `The daily AXR monitor poll detected an inconsistency in the STH stream.\n\n\`\`\`\n${output}\n\`\`\`\n\nThis may indicate equivocation, truncation, or log rewriting. Investigate immediately.\n\nRun locally to confirm:\n\`\`\`bash\nnode axr-monitor.js poll logs/eco-clean-hu/sth.jsonl keys/sth-public.pem --state my-state.json\n\`\`\``,
-              labels: ['security', 'axr-monitor']
-            });
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          title="AXR MONITOR ALERT: log violation detected ($(date -u +%Y-%m-%d))"
+          existing=$(gh issue list --state open --search "AXR MONITOR ALERT" --json number --jq 'length')
+          body="The independent monitor detected a violation in the published STH stream.
+
+\`\`\`
+$(tail -40 monitor/last-poll.log)
+\`\`\`
+
+Possible causes: EQUIVOCATION (split view), TRUNCATION, NON_APPEND_ONLY (history rewrite), ROOT_MISMATCH, or BAD_SIGNATURE. See the monitor journal history in \`monitor/\` for the witnessed tree heads."
+          if [ "$existing" = "0" ]; then
+            gh issue create --title "$title" --body "$body" --label "monitor-alert" || gh issue create --title "$title" --body "$body"
+          else
+            echo "Mar van nyitott monitor-alert issue - nem duplikalunk."
+          fi
+
+      - name: Fail the job on violation
+        if: steps.poll.outputs.exit_code != '0'
+        run: exit 1
