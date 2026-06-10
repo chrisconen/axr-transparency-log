@@ -1,0 +1,14 @@
+{
+  "axr_monitor_version": "0.3",
+  "log_id": "axr:eco-clean-hu:v1",
+  "public_key_fingerprint": "sha256:e5db918a03f2bf5730fc62892759626d855930c8c704928f671d68121aa20272",
+  "witnessed": [
+    {
+      "tree_size": 227,
+      "root_hash": "sha256:c4afea63dff671e39c7f8809fe8ad0fd38097ff88aa708af76c40417d2525345",
+      "sth_hash": "sha256:995742613028bb87fde716f17f0fb8911187e4efff88c5d027a78d719a254d45",
+      "sth_timestamp": "2026-06-10T11:49:22.950Z",
+      "first_seen_at": "2026-06-10T14:11:28.824Z"
+    }
+  ]
+}
