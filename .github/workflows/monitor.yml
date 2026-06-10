@@ -1,5 +1,5 @@
 # ═══════════════════════════════════════════════════════════════════════════════
-# AXR Transparency Monitor - GitHub Actions
+# AXR Transparency Monitor - GitHub Actions (v2 - Fable 5 layout)
 # ═══════════════════════════════════════════════════════════════════════════════
 # Naponta lefuttatja az axr-monitor.js poll-t a repoban publikalt STH-folyam
 # folott, es a monitor journaljat (monitor/monitor-state.json) commitkent orzi.
