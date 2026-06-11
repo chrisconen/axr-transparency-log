@@ -25,16 +25,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Transparency repo checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: AXR tooling checkout (monitor + core)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           repository: chrisconen/AXR
           path: axr-tools
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '22'
 
